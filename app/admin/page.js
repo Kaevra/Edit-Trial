@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { DAYS } from '@/lib/template';
 import { listMaterials, saveMaterial, deleteMaterial } from '@/lib/storage';
-import { parseHtml, textToHtml, hashOf } from '@/lib/parse';
+import { parseHtml, textToHtml, hashOf, unwrapOcr } from '@/lib/parse';
 
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const mondayOf = (d) => { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
@@ -46,9 +46,23 @@ export default function Admin() {
     } catch (err) { setMsg('Gagal: ' + err.message); }
     e.target.value = '';
   }
+  async function onImages(e) {
+    const files = [...e.target.files]; if (!files.length) return;
+    try {
+      setMsg('Membaca teks dari gambar… (pertama kali perlu mengunduh data bahasa, mohon tunggu)');
+      const { createWorker } = await import('tesseract.js');
+      const w = await createWorker('ind+eng');
+      let all = '';
+      for (const f of files) { const { data } = await w.recognize(f); all += data.text + '\n'; }
+      await w.terminate();
+      setText(unwrapOcr(all));
+      setMsg('Teks terbaca. Periksa dan perbaiki dulu di kotak teks, lalu tekan "Buat slide dari teks".');
+    } catch (err) { setMsg('Gagal membaca gambar: ' + err.message); }
+    e.target.value = '';
+  }
   async function onPaste() {
     if (!text.trim()) return;
-    await importList(parseHtml(textToHtml(text))); setText('');
+    await importList(parseHtml(textToHtml(text), { single: true })); setText('');
   }
 
   const upd = async (m, patch) => { await saveMaterial({ ...m, ...patch }); load(); };
@@ -63,7 +77,8 @@ export default function Admin() {
       <div className="card" style={{ cursor: 'default' }}>
         <div className="row">
           <label>Paket minggu mulai Senin:&nbsp;<input type="date" value={week} onChange={(e) => setWeek(e.target.value)} style={{ flex: 'none' }} /></label>
-          <label className="btn pri">Upload .docx<input type="file" accept=".docx" hidden onChange={onFile} /></label>
+          <label className="btn pri">Upload Word (.docx)<input type="file" accept=".docx" hidden onChange={onFile} /></label>
+          <label className="btn">Upload gambar (baca teks)<input type="file" accept="image/*" multiple hidden onChange={onImages} /></label>
         </div>
         <textarea placeholder={'Atau tempel teks materi di sini.\nBaris pertama = judul, "-" atau angka = pembahasan, "|a|b|" atau tab = tabel, lalu CAPTION:'} value={text} onChange={(e) => setText(e.target.value)} />
         <div className="row" style={{ marginTop: 8 }}><button onClick={onPaste}>Buat slide dari teks</button></div>

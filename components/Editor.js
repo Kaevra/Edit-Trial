@@ -5,6 +5,7 @@ import JSZip from 'jszip';
 import Slide from './Slide';
 import { T } from '@/lib/template';
 import { saveMaterial } from '@/lib/storage';
+import { fileToDataUrl } from '@/lib/image';
 
 // elemen editable -> teks dengan penanda **penekanan (ukuran 50)**
 function md(el) {
@@ -41,7 +42,7 @@ export default function Editor({ initial }) {
   // simpan otomatis
   useEffect(() => {
     if (first.current) { first.current = false; return; }
-    const t = setTimeout(() => { saveMaterial(m).then(() => setMsg('Tersimpan otomatis.')); }, 700);
+    const t = setTimeout(() => { saveMaterial(m).then(() => setMsg('Tersimpan otomatis.')).catch(() => setMsg('Penyimpanan penuh. Hapus materi lama atau kurangi gambar.')); }, 700);
     return () => clearTimeout(t);
   }, [m]);
 
@@ -91,6 +92,16 @@ export default function Editor({ initial }) {
     setSi(keep);
   }
 
+  async function addImage(e) {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const url = await fileToDataUrl(f);
+      edit((n) => { n.slides.splice(si + 1, 0, { type: 'image', image: url, text: '', items: [], rows: [], fs: 0 }); });
+      setSi(si + 1); setV((x) => x + 1); setMsg('Gambar ditambahkan sebagai slide baru.');
+    } catch { setMsg('Gagal membaca gambar.'); }
+    e.target.value = '';
+  }
+
   const move = (d) => { const j = si + d; if (j < 0 || j >= m.slides.length) return; edit((n) => { [n.slides[si], n.slides[j]] = [n.slides[j], n.slides[si]]; }); setSi(j); setV((x) => x + 1); };
   const del = () => { if (m.slides.length > 1 && confirm('Hapus slide ini?')) { edit((n) => n.slides.splice(si, 1)); setSi(Math.max(0, si - 1)); setV((x) => x + 1); } };
   const fs = (d) => upd((sl) => { sl.fs = (sl.fs || (sl.type === 'cover' ? T.size.cover : sl.type === 'cta' ? T.size.cta : T.size.body)) + d; });
@@ -115,7 +126,7 @@ export default function Editor({ initial }) {
         <Slide key={`${si}-${v}-${mode}`} s={s} i={si} n={m.slides.length} title={m.title} scale={scale} innerRef={node} editable={edit_} />
       </div>
       <div id="strip">
-        {m.slides.map((x, i) => (<div key={i} className={'th' + (i === si ? ' on' : '')} onClick={() => setSi(i)}>{(x.text || 'tabel').slice(0, 50)}</div>))}
+        {m.slides.map((x, i) => (<div key={i} className={'th' + (i === si ? ' on' : '')} onClick={() => setSi(i)}>{(x.text || (x.type === 'image' ? 'gambar' : 'tabel')).slice(0, 50)}</div>))}
       </div>
       <div className="row">
         <button disabled={si === 0} onClick={() => setSi(si - 1)}>←</button>
@@ -124,6 +135,7 @@ export default function Editor({ initial }) {
           <button onClick={() => fs(-4)}>A−</button><button onClick={() => fs(4)}>A+</button>
           <button className="pri" onPointerDown={(e) => e.preventDefault()} onClick={toggleBig}>Teks {T.size.emph} ⇄ {T.size.body}</button>
           <button onClick={() => move(-1)}>Geser ◂</button><button onClick={() => move(1)}>▸ Geser</button>
+          <label className="btn">＋ Gambar<input type="file" accept="image/*" hidden onChange={addImage} /></label>
           <button onClick={del}>Hapus</button>
         </>}
       </div>

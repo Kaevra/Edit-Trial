@@ -25,7 +25,12 @@ export default function Slide({ s, i, n, title, scale, innerRef, editable = true
       {T.showTitleTag && <div className="tag" style={{ color: T.accent }}>{title}</div>}
       <div className="main">
         {cover && <div style={{ width: 120, height: 10, background: T.accent, marginBottom: 40 }} />}
-        {s.type === 'table' ? (
+        {s.type === 'image' ? (
+          <>
+            <img src={s.image} alt="" style={{ width: '100%', maxHeight: 900, objectFit: 'contain', borderRadius: 24 }} />
+            {(s.text || editable) && E('text', s.text, { marginTop: 30, textAlign: 'center', minHeight: 50 })}
+          </>
+        ) : s.type === 'table' ? (
           <>
             {E('text', s.text, { fontWeight: 700, fontSize: T.size.tableTitle })}
             <table>
