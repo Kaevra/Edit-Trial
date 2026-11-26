@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { DAYS } from '@/lib/template';
+import { DAYS, COVER_THEMES } from '@/lib/template';
 import { listMaterials, saveMaterial, deleteMaterial } from '@/lib/storage';
+import { fileToDataUrl } from '@/lib/image';
 import { parseHtml, textToHtml, hashOf, unwrapOcr } from '@/lib/parse';
 
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -13,6 +14,7 @@ export default function Admin() {
   const [week, setWeek] = useState('');
   const [text, setText] = useState('');
   const [msg, setMsg] = useState('');
+  const [theme, setTheme] = useState('green');
   const load = () => listMaterials().then(setAll);
   useEffect(() => { setWeek(iso(mondayOf(new Date()))); load(); }, []);
 
@@ -24,13 +26,14 @@ export default function Admin() {
     let slot = cur.filter((x) => x.week === week).length;
     for (const m of list) {
       const hash = hashOf(m.slides);
+      m.slides.forEach((s) => { s.seed = Math.floor(Math.random() * 1e9); });
       const ex = cur.find((x) => x.title === m.title);
       if (ex && ex.hash === hash) { skipped++; continue; }
       if (ex) {
         if (!confirm(`Materi "${m.title}" sudah ada tetapi isinya berubah.\n\nOK = timpa dengan yang baru\nBatal = lewati`)) { skipped++; continue; }
         await saveMaterial({ ...ex, caption: m.caption, slides: m.slides, hash }); replaced++; continue;
       }
-      await saveMaterial({ id: crypto.randomUUID(), title: m.title, caption: m.caption, slides: m.slides, hash, week, day: Math.min(slot + 1, 6), posted: false, createdAt: Date.now() });
+      await saveMaterial({ id: crypto.randomUUID(), title: m.title, caption: m.caption, slides: m.slides, hash, week, theme, day: Math.min(slot + 1, 6), posted: false, createdAt: Date.now() });
       slot++; added++;
     }
     setMsg(`Selesai: ${added} baru, ${replaced} ditimpa, ${skipped} dilewati.`); load();
@@ -46,6 +49,23 @@ export default function Admin() {
     } catch (err) { setMsg('Gagal: ' + err.message); }
     e.target.value = '';
   }
+  // Foto langsung jadi slide, tanpa diubah ke teks
+  async function onPhotos(e) {
+    const files = [...e.target.files]; if (!files.length) return;
+    try {
+      const title = (prompt('Judul materi untuk foto-foto ini:', files[0].name.replace(/\.[^.]+$/, '')) || '').trim();
+      if (!title) { e.target.value = ''; return; }
+      setMsg('Memproses foto…');
+      const slides = [];
+      for (const f of files) slides.push({ type: 'image', image: await fileToDataUrl(f), text: '', items: [], rows: [], fs: 0, full: true });
+      const cur = await listMaterials();
+      const slot = cur.filter((x) => x.week === week).length;
+      await saveMaterial({ id: crypto.randomUUID(), title, caption: '', slides, hash: '', week, theme, day: Math.min(slot + 1, 6), posted: false, createdAt: Date.now() });
+      setMsg(`Selesai: materi "${title}" dibuat dengan ${slides.length} slide foto.`); load();
+    } catch (err) { setMsg('Gagal: ' + err.message + ' (kemungkinan penyimpanan browser penuh)'); }
+    e.target.value = '';
+  }
+
   async function onImages(e) {
     const files = [...e.target.files]; if (!files.length) return;
     try {
@@ -76,9 +96,11 @@ export default function Admin() {
       <h1 style={{ fontSize: 20 }}>Carousel Studio · Admin</h1>
       <div className="card" style={{ cursor: 'default' }}>
         <div className="row">
+          <label>Warna cover:&nbsp;<select value={theme} onChange={(e) => setTheme(e.target.value)}>{Object.entries(COVER_THEMES).map(([k, t]) => <option key={k} value={k}>{t.label}</option>)}</select></label>
           <label>Paket minggu mulai Senin:&nbsp;<input type="date" value={week} onChange={(e) => setWeek(e.target.value)} style={{ flex: 'none' }} /></label>
-          <label className="btn pri">Upload Word (.docx)<input type="file" accept=".docx" hidden onChange={onFile} /></label>
-          <label className="btn">Upload gambar (baca teks)<input type="file" accept="image/*" multiple hidden onChange={onImages} /></label>
+          <label className="btn">Upload Word (.docx)<input type="file" accept=".docx" hidden onChange={onFile} /></label>
+          <label className="btn pri">Upload foto → jadi slide<input type="file" accept="image/*" multiple hidden onChange={onPhotos} /></label>
+          <label className="btn">Foto → baca teks (OCR)<input type="file" accept="image/*" multiple hidden onChange={onImages} /></label>
         </div>
         <textarea placeholder={'Atau tempel teks materi di sini.\nBaris pertama = judul, "-" atau angka = pembahasan, "|a|b|" atau tab = tabel, lalu CAPTION:'} value={text} onChange={(e) => setText(e.target.value)} />
         <div className="row" style={{ marginTop: 8 }}><button onClick={onPaste}>Buat slide dari teks</button></div>
@@ -96,6 +118,7 @@ export default function Admin() {
                   <select value={m.day} onChange={(e) => upd(m, { day: +e.target.value })}>
                     {DAYS.map((d, i) => <option key={d} value={i + 1}>{d}</option>)}
                   </select>
+                  <select value={m.theme || 'green'} onChange={(e) => upd(m, { theme: e.target.value })}>{Object.entries(COVER_THEMES).map(([k, t]) => <option key={k} value={k}>{t.label}</option>)}</select>
                   <span className={'pill' + (m.posted ? ' ok' : '')}>{m.posted ? 'sudah diposting' : 'belum diposting'}</span>
                   {w === thisMon && m.day - 1 === todayIdx && <span className="pill">hari ini</span>}
                 </div>

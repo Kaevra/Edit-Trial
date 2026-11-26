@@ -2,8 +2,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { toPng } from 'html-to-image';
 import JSZip from 'jszip';
-import Slide from './Slide';
-import { T } from '@/lib/template';
+import Slide, { baseSize } from './Slide';
+import { T, COVER_THEMES } from '@/lib/template';
 import { saveMaterial } from '@/lib/storage';
 import { fileToDataUrl } from '@/lib/image';
 
@@ -11,7 +11,7 @@ import { fileToDataUrl } from '@/lib/image';
 function md(el) {
   let o = '';
   el.childNodes.forEach((n) => {
-    o += n.nodeType === 3 ? n.textContent : n.classList?.contains('big') ? '**' + n.textContent + '**' : n.nodeName === 'BR' ? '\n' : n.textContent;
+    o += n.nodeType === 3 ? n.textContent : n.classList?.contains('sz') ? `[[${n.dataset.size}:${n.textContent}]]` : n.classList?.contains('big') ? '**' + n.textContent + '**' : n.nodeName === 'BR' ? '\n' : n.textContent;
   });
   return o;
 }
@@ -22,6 +22,8 @@ export default function Editor({ initial }) {
   const [si, setSi] = useState(0);
   const [v, setV] = useState(0);
   const [msg, setMsg] = useState('');
+  const [selSize, setSelSize] = useState('50');
+  const lastRange = useRef(null);
   const [mode, setMode] = useState('view');   // 'view' = hasil jadi, 'edit' = mengedit
   const [scale, setScale] = useState(0.4);
   const stage = useRef(null), node = useRef(null), first = useRef(true);
@@ -37,6 +39,14 @@ export default function Editor({ initial }) {
     const q = new URLSearchParams(location.search);
     if (q.get('edit')) setMode('edit');
     if (q.get('dl')) setTimeout(() => exportZip(), 1000);
+  }, []);
+
+  useEffect(() => {
+    const h = () => {
+      const sel = getSelection();
+      if (sel && sel.rangeCount && !sel.isCollapsed && node.current?.contains(sel.anchorNode)) lastRange.current = sel.getRangeAt(0).cloneRange();
+    };
+    document.addEventListener('selectionchange', h); return () => document.removeEventListener('selectionchange', h);
   }, []);
 
   // simpan otomatis
@@ -59,20 +69,49 @@ export default function Editor({ initial }) {
     });
   }
 
-  function toggleBig() {
+  const selTarget = () => {
     const sel = getSelection();
-    if (!sel.rangeCount || sel.isCollapsed) return setMsg('Blok kata/kalimat di slide dulu, lalu tekan tombol ini.');
-    const r = sel.getRangeAt(0), a = r.commonAncestorContainer, el = a.nodeType === 3 ? a.parentElement : a;
+    const r = sel.rangeCount && !sel.isCollapsed ? sel.getRangeAt(0) : lastRange.current;
+    if (!r) { setMsg('Blok kata/kalimat di slide dulu.'); return null; }
+    const a = r.commonAncestorContainer, el = a.nodeType === 3 ? a.parentElement : a;
     const ed = el.closest('[contenteditable]');
-    if (!ed || !node.current?.contains(ed)) return;
-    const big = el.closest('.big');
+    if (!ed || !node.current?.contains(ed)) { setMsg('Blok teks di dalam slide.'); return null; }
+    return { r, el, ed };
+  };
+  const finishSel = (ed, text) => { commit(ed); setV((x) => x + 1); lastRange.current = null; setMsg(text); };
+
+  function toggleBig() {
+    const t = selTarget(); if (!t) return;
+    const { r, el, ed } = t, big = el.closest('.big');
     if (big) big.replaceWith(...big.childNodes);
     else {
       const sp = document.createElement('span'); sp.className = 'big';
       try { r.surroundContents(sp); } catch { return setMsg('Blok teks dalam satu paragraf saja.'); }
     }
-    commit(ed); setV((x) => x + 1); setMsg(`Ukuran diubah (${T.size.emph} = penekanan, ${T.size.body} = standar).`);
+    finishSel(ed, `Ukuran diubah (${T.size.emph} = penekanan, ${T.size.body} = standar).`);
   }
+
+  // ukuran bebas 1-500 untuk blok teks
+  function applySize() {
+    const n = Math.min(500, Math.max(1, parseInt(selSize) || 0));
+    if (!n) return setMsg('Isi ukuran 1 sampai 500.');
+    const t = selTarget(); if (!t) return;
+    const { r, el, ed } = t, ex = el.closest('.sz');
+    if (ex) { ex.dataset.size = n; ex.style.fontSize = n + 'px'; }
+    else {
+      const sp = document.createElement('span'); sp.className = 'sz'; sp.dataset.size = n; sp.style.fontSize = n + 'px';
+      try { r.surroundContents(sp); } catch { return setMsg('Blok teks dalam satu paragraf saja.'); }
+    }
+    finishSel(ed, `Blok teks diubah ke ukuran ${n}.`);
+  }
+  function clearSel() {
+    const t = selTarget(); if (!t) return;
+    const x = t.el.closest('.sz') || t.el.closest('.big');
+    if (x) x.replaceWith(...x.childNodes);
+    finishSel(t.ed, 'Blok kembali ke ukuran standar slide.');
+  }
+  const clampSize = (v) => Math.min(500, Math.max(1, parseInt(v) || 0));
+  const setSize = (v, key = 'fs') => { const n = clampSize(v); if (n) upd((sl) => { sl[key] = n; }); };
 
   const shot = () => { document.activeElement?.blur(); return toPng(node.current, { width: T.width, height: T.height, pixelRatio: 1, style: { transform: 'none' }, cacheBust: true }); };
   async function exportOne() {
@@ -104,7 +143,7 @@ export default function Editor({ initial }) {
 
   const move = (d) => { const j = si + d; if (j < 0 || j >= m.slides.length) return; edit((n) => { [n.slides[si], n.slides[j]] = [n.slides[j], n.slides[si]]; }); setSi(j); setV((x) => x + 1); };
   const del = () => { if (m.slides.length > 1 && confirm('Hapus slide ini?')) { edit((n) => n.slides.splice(si, 1)); setSi(Math.max(0, si - 1)); setV((x) => x + 1); } };
-  const fs = (d) => upd((sl) => { sl.fs = (sl.fs || (sl.type === 'cover' ? T.size.cover : sl.type === 'cta' ? T.size.cta : T.size.body)) + d; });
+  const fs = (d) => upd((sl) => { sl.fs = clampSize((sl.fs || baseSize(sl)) + d) || 1; });
 
   const edit_ = mode === 'edit';
   return (
@@ -121,9 +160,20 @@ export default function Editor({ initial }) {
         <button onClick={exportZip}>⬇ Download semua (ZIP)</button>
         <button onClick={exportOne}>⬇ PNG slide ini</button>
       </div>
+      <div className="row">
+        <label>Warna cover:&nbsp;
+          <select value={m.theme || 'green'} onChange={(e) => { edit((n) => { n.theme = e.target.value; }); setV((x) => x + 1); }}>
+            {Object.entries(COVER_THEMES).map(([k, t]) => <option key={k} value={k}>{t.label}</option>)}
+          </select>
+        </label>
+        {edit_ && <>
+          <button onClick={() => upd((sl) => { sl.seed = Math.floor(Math.random() * 1e9); })}>🎲 Acak gradien slide ini</button>
+          <button onClick={() => { edit((n) => n.slides.forEach((sl) => { sl.seed = Math.floor(Math.random() * 1e9); })); setV((x) => x + 1); }}>🎲 Acak semua slide</button>
+        </>}
+      </div>
 
       <div id="stage" ref={stage} onBlur={(e) => edit_ && e.target.isContentEditable && commit(e.target)}>
-        <Slide key={`${si}-${v}-${mode}`} s={s} i={si} n={m.slides.length} title={m.title} scale={scale} innerRef={node} editable={edit_} />
+        <Slide key={`${si}-${v}-${mode}`} s={s} i={si} n={m.slides.length} title={m.title} scale={scale} innerRef={node} editable={edit_} theme={m.theme || 'green'} />
       </div>
       <div id="strip">
         {m.slides.map((x, i) => (<div key={i} className={'th' + (i === si ? ' on' : '')} onClick={() => setSi(i)}>{(x.text || (x.type === 'image' ? 'gambar' : 'tabel')).slice(0, 50)}</div>))}
@@ -132,13 +182,32 @@ export default function Editor({ initial }) {
         <button disabled={si === 0} onClick={() => setSi(si - 1)}>←</button>
         <button disabled={si === m.slides.length - 1} onClick={() => setSi(si + 1)}>→</button>
         {edit_ && <>
-          <button onClick={() => fs(-4)}>A−</button><button onClick={() => fs(4)}>A+</button>
+          <button onClick={() => fs(-2)}>A−</button><button onClick={() => fs(2)}>A+</button>
           <button className="pri" onPointerDown={(e) => e.preventDefault()} onClick={toggleBig}>Teks {T.size.emph} ⇄ {T.size.body}</button>
           <button onClick={() => move(-1)}>Geser ◂</button><button onClick={() => move(1)}>▸ Geser</button>
+          {s.type === 'image' && <button onClick={() => upd((sl) => { sl.full = !sl.full; })}>{s.full ? 'Gambar: penuh' : 'Gambar: dalam template'} ⇄</button>}
           <label className="btn">＋ Gambar<input type="file" accept="image/*" hidden onChange={addImage} /></label>
           <button onClick={del}>Hapus</button>
         </>}
       </div>
+      {edit_ && (
+        <div className="row">
+          <label>Ukuran slide:&nbsp;
+            <input key={`z${si}-${v}`} type="number" min="1" max="500" defaultValue={s.fs || baseSize(s)} onBlur={(e) => setSize(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && e.target.blur()} style={{ width: 80, flex: 'none' }} />
+          </label>
+          {s.type === 'table' && (
+            <label>Ukuran tabel:&nbsp;
+              <input key={`t${si}-${v}`} type="number" min="1" max="500" defaultValue={s.tfs || (s.rows[0]?.length >= 5 ? 32 : 40)} onBlur={(e) => setSize(e.target.value, 'tfs')} onKeyDown={(e) => e.key === 'Enter' && e.target.blur()} style={{ width: 80, flex: 'none' }} />
+            </label>
+          )}
+          <button onClick={() => upd((sl) => { delete sl.fs; delete sl.tfs; })}>Reset ukuran</button>
+          <label>Ukuran blok:&nbsp;
+            <input type="number" min="1" max="500" value={selSize} onChange={(e) => setSelSize(e.target.value)} style={{ width: 80, flex: 'none' }} />
+          </label>
+          <button className="pri" onPointerDown={(e) => e.preventDefault()} onClick={applySize}>Terapkan ke blok</button>
+          <button onPointerDown={(e) => e.preventDefault()} onClick={clearSel}>Normal</button>
+        </div>
+      )}
       <div className="hint">{msg || (edit_ ? 'Klik teks atau sel tabel untuk mengedit. Perubahan tersimpan otomatis.' : 'Hasil jadi. Tekan "Edit konten" kalau perlu mengubah sedikit.')}</div>
       <b>Caption</b>
       <textarea readOnly={!edit_} value={m.caption || ''} onChange={(e) => edit((n) => { n.caption = e.target.value; })} />
