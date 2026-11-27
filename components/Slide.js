@@ -4,7 +4,10 @@ import { bgFor } from '@/lib/bg';
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
 export const rich = (s) => esc(s)
-  .replace(/\[\[(\d{1,3}):(.+?)\]\]/g, '<span class="sz" data-size="$1" style="font-size:$1px">$2</span>')
+  .replace(/\[\[(\d{0,3})([bi]{0,2}):(.+?)\]\]/g, (_, n, f, t) => {
+    const b = f.includes('b'), it = f.includes('i');
+    return `<span class="sz"${n ? ` data-size="${n}"` : ''}${b ? ' data-bold="1"' : ''}${it ? ' data-ital="1"' : ''} style="${n ? `font-size:${n}px;` : ''}${b ? 'font-weight:700;' : ''}${it ? 'font-style:italic;' : ''}">${t}</span>`;
+  })
   .replace(/\*\*(.+?)\*\*/g, '<span class="big">$1</span>')
   .replace(/\n/g, '<br>');
 const num = (s) => parseFloat(String(s).replace(/\./g, '').replace(',', '.').replace(/[^0-9.\-]/g, ''));
@@ -95,7 +98,11 @@ export default function Slide({ s, i, n, title, scale, innerRef, editable = true
         ) : cover ? (
           E('text', s.text, { color: T.colors.title, textAlign: th.align, lineHeight: 0.9, letterSpacing: '-0.04em', fontFamily: T.fontHead })
         ) : (
-          E('text', s.text, { textAlign: 'center', ...(s.type === 'cta' ? { color: T.colors.title } : {}) })
+          (s.blocks?.length ? s.blocks : [{ text: s.text }]).map((b, k) => (
+            <div key={k} className="t" contentEditable={editable} suppressContentEditableWarning data-b={k}
+              style={{ fontSize: b.fs || base, fontFamily: T.fontBody, color: s.type === 'cta' ? T.colors.title : T.colors.body, textAlign: 'center', marginBottom: 28 }}
+              dangerouslySetInnerHTML={{ __html: rich(b.text) }} />
+          ))
         )}
       </div>
 

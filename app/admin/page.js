@@ -49,35 +49,33 @@ export default function Admin() {
     } catch (err) { setMsg('Gagal: ' + err.message); }
     e.target.value = '';
   }
-  // Foto langsung jadi slide, tanpa diubah ke teks
+  // Cadangan: kalau teks tidak terbaca dari foto, jadikan tiap foto sebagai slide gambar
+  async function photosAsSlides(files) {
+    const title = (prompt('Teks tidak terbaca. Judul materi untuk foto-foto ini (jadi slide gambar):', files[0].name.replace(/\.[^.]+$/, '')) || '').trim();
+    if (!title) return;
+    const slides = [];
+    for (const f of files) slides.push({ type: 'image', image: await fileToDataUrl(f), text: '', items: [], rows: [], fs: 0, full: true });
+    const cur = await listMaterials();
+    const slot = cur.filter((x) => x.week === week).length;
+    await saveMaterial({ id: crypto.randomUUID(), title, caption: '', slides, hash: '', week, theme, day: Math.min(slot + 1, 6), posted: false, createdAt: Date.now() });
+    setMsg(`Materi "${title}" dibuat dari ${slides.length} foto (sebagai slide gambar).`); load();
+  }
+
+  // Upload foto: dibaca seperti dokumen Word -> langsung jadi slide per pembahasan
   async function onPhotos(e) {
     const files = [...e.target.files]; if (!files.length) return;
     try {
-      const title = (prompt('Judul materi untuk foto-foto ini:', files[0].name.replace(/\.[^.]+$/, '')) || '').trim();
-      if (!title) { e.target.value = ''; return; }
-      setMsg('Memproses foto…');
-      const slides = [];
-      for (const f of files) slides.push({ type: 'image', image: await fileToDataUrl(f), text: '', items: [], rows: [], fs: 0, full: true });
-      const cur = await listMaterials();
-      const slot = cur.filter((x) => x.week === week).length;
-      await saveMaterial({ id: crypto.randomUUID(), title, caption: '', slides, hash: '', week, theme, day: Math.min(slot + 1, 6), posted: false, createdAt: Date.now() });
-      setMsg(`Selesai: materi "${title}" dibuat dengan ${slides.length} slide foto.`); load();
-    } catch (err) { setMsg('Gagal: ' + err.message + ' (kemungkinan penyimpanan browser penuh)'); }
-    e.target.value = '';
-  }
-
-  async function onImages(e) {
-    const files = [...e.target.files]; if (!files.length) return;
-    try {
-      setMsg('Membaca teks dari gambar… (pertama kali perlu mengunduh data bahasa, mohon tunggu)');
+      setMsg('Membaca foto… (pertama kali mengunduh data bahasa, mohon tunggu)');
       const { createWorker } = await import('tesseract.js');
       const w = await createWorker('ind+eng');
       let all = '';
       for (const f of files) { const { data } = await w.recognize(f); all += data.text + '\n'; }
       await w.terminate();
-      setText(unwrapOcr(all));
-      setMsg('Teks terbaca. Periksa dan perbaiki dulu di kotak teks, lalu tekan "Buat slide dari teks".');
-    } catch (err) { setMsg('Gagal membaca gambar: ' + err.message); }
+      const txt = unwrapOcr(all);
+      const list = txt.trim().length >= 15 ? parseHtml(textToHtml(txt)) : [];
+      if (list.length) await importList(list);
+      else await photosAsSlides(files);
+    } catch (err) { setMsg('Gagal membaca foto: ' + err.message); }
     e.target.value = '';
   }
   async function onPaste() {
@@ -99,8 +97,7 @@ export default function Admin() {
           <label>Warna cover:&nbsp;<select value={theme} onChange={(e) => setTheme(e.target.value)}>{Object.entries(COVER_THEMES).map(([k, t]) => <option key={k} value={k}>{t.label}</option>)}</select></label>
           <label>Paket minggu mulai Senin:&nbsp;<input type="date" value={week} onChange={(e) => setWeek(e.target.value)} style={{ flex: 'none' }} /></label>
           <label className="btn">Upload Word (.docx)<input type="file" accept=".docx" hidden onChange={onFile} /></label>
-          <label className="btn pri">Upload foto → jadi slide<input type="file" accept="image/*" multiple hidden onChange={onPhotos} /></label>
-          <label className="btn">Foto → baca teks (OCR)<input type="file" accept="image/*" multiple hidden onChange={onImages} /></label>
+          <label className="btn pri">Upload foto<input type="file" accept="image/*" multiple hidden onChange={onPhotos} /></label>
         </div>
         <textarea placeholder={'Atau tempel teks materi di sini.\nBaris pertama = judul, "-" atau angka = pembahasan, "|a|b|" atau tab = tabel, lalu CAPTION:'} value={text} onChange={(e) => setText(e.target.value)} />
         <div className="row" style={{ marginTop: 8 }}><button onClick={onPaste}>Buat slide dari teks</button></div>

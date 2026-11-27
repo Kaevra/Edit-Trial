@@ -11,7 +11,7 @@ import { fileToDataUrl } from '@/lib/image';
 function md(el) {
   let o = '';
   el.childNodes.forEach((n) => {
-    o += n.nodeType === 3 ? n.textContent : n.classList?.contains('sz') ? `[[${n.dataset.size}:${n.textContent}]]` : n.classList?.contains('big') ? '**' + n.textContent + '**' : n.nodeName === 'BR' ? '\n' : n.textContent;
+    o += n.nodeType === 3 ? n.textContent : n.classList?.contains('sz') ? `[[${n.dataset.size || ''}${n.dataset.bold ? 'b' : ''}${n.dataset.ital ? 'i' : ''}:${n.textContent}]]` : n.classList?.contains('big') ? '**' + n.textContent + '**' : n.nodeName === 'BR' ? '\n' : n.textContent;
   });
   return o;
 }
@@ -23,6 +23,7 @@ export default function Editor({ initial }) {
   const [v, setV] = useState(0);
   const [msg, setMsg] = useState('');
   const [selSize, setSelSize] = useState('50');
+  const [bi, setBi] = useState(0);   // blok teks yang sedang dipilih
   const lastRange = useRef(null);
   const [mode, setMode] = useState('view');   // 'view' = hasil jadi, 'edit' = mengedit
   const [scale, setScale] = useState(0.4);
@@ -63,7 +64,10 @@ export default function Editor({ initial }) {
     const val = md(ed).trim();
     edit((n) => {
       const sl = n.slides[si];
-      if (ed.dataset.f) sl.text = val;
+      if (ed.dataset.b !== undefined) {
+        sl.blocks = sl.blocks?.length ? sl.blocks : [{ text: sl.text }];
+        sl.blocks[+ed.dataset.b].text = val; sl.text = sl.blocks[0].text;
+      } else if (ed.dataset.f) sl.text = val;
       else if (ed.dataset.i !== undefined) sl.items[+ed.dataset.i] = val;
       else if (ed.dataset.r !== undefined) sl.rows[+ed.dataset.r][+ed.dataset.c] = val.replace(/^[▲▼]\s*/, '');
     });
@@ -104,6 +108,20 @@ export default function Editor({ initial }) {
     }
     finishSel(ed, `Blok teks diubah ke ukuran ${n}.`);
   }
+  // bold / italic untuk blok teks (bisa digabung dengan ukuran)
+  function toggleFmt(flag) {
+    const t = selTarget(); if (!t) return;
+    const { r, el, ed } = t, key = flag === 'b' ? 'bold' : 'ital';
+    let sp = el.closest('.sz');
+    if (!sp) {
+      sp = document.createElement('span'); sp.className = 'sz';
+      try { r.surroundContents(sp); } catch { return setMsg('Blok teks dalam satu paragraf saja.'); }
+    }
+    if (sp.dataset[key]) delete sp.dataset[key]; else sp.dataset[key] = '1';
+    sp.style.fontWeight = sp.dataset.bold ? '700' : ''; sp.style.fontStyle = sp.dataset.ital ? 'italic' : '';
+    if (!sp.dataset.size && !sp.dataset.bold && !sp.dataset.ital) sp.replaceWith(...sp.childNodes);
+    finishSel(ed, flag === 'b' ? 'Bold diubah.' : 'Italic diubah.');
+  }
   function clearSel() {
     const t = selTarget(); if (!t) return;
     const x = t.el.closest('.sz') || t.el.closest('.big');
@@ -111,7 +129,31 @@ export default function Editor({ initial }) {
     finishSel(t.ed, 'Blok kembali ke ukuran standar slide.');
   }
   const clampSize = (v) => Math.min(500, Math.max(1, parseInt(v) || 0));
-  const setSize = (v, key = 'fs') => { const n = clampSize(v); if (n) upd((sl) => { sl[key] = n; }); };
+  const isBlk = (sl) => sl.type === 'text' || sl.type === 'cta';
+  const curSize = () => (isBlk(s) ? s.blocks?.[bi]?.fs || s.fs || baseSize(s) : s.fs || baseSize(s));
+  const setSize = (v, key = 'fs') => {
+    const n = clampSize(v); if (!n) return;
+    upd((sl) => {
+      if (key === 'fs' && isBlk(sl)) {
+        const bl = sl.blocks?.length ? sl.blocks : [{ text: sl.text }];
+        bl[Math.min(bi, bl.length - 1)].fs = n; sl.blocks = bl;
+      } else sl[key] = n;
+    });
+  };
+  const dupBlock = () => {
+    upd((sl) => {
+      const bl = sl.blocks?.length ? sl.blocks : [{ text: sl.text }];
+      const k = Math.min(bi, bl.length - 1); bl.splice(k + 1, 0, { ...bl[k] }); sl.blocks = bl;
+    });
+    setBi(bi + 1); setMsg('Teks diduplikat. Hapus bagian yang tidak perlu di tiap blok, lalu atur ukurannya masing-masing.');
+  };
+  const delBlock = () => {
+    upd((sl) => {
+      if (!sl.blocks || sl.blocks.length < 2) return;
+      sl.blocks.splice(Math.min(bi, sl.blocks.length - 1), 1); sl.text = sl.blocks[0].text;
+    });
+    setBi(Math.max(0, bi - 1));
+  };
 
   const shot = () => { document.activeElement?.blur(); return toPng(node.current, { width: T.width, height: T.height, pixelRatio: 1, style: { transform: 'none' }, cacheBust: true }); };
   async function exportOne() {
@@ -143,7 +185,7 @@ export default function Editor({ initial }) {
 
   const move = (d) => { const j = si + d; if (j < 0 || j >= m.slides.length) return; edit((n) => { [n.slides[si], n.slides[j]] = [n.slides[j], n.slides[si]]; }); setSi(j); setV((x) => x + 1); };
   const del = () => { if (m.slides.length > 1 && confirm('Hapus slide ini?')) { edit((n) => n.slides.splice(si, 1)); setSi(Math.max(0, si - 1)); setV((x) => x + 1); } };
-  const fs = (d) => upd((sl) => { sl.fs = clampSize((sl.fs || baseSize(sl)) + d) || 1; });
+  const fs = (d) => setSize(curSize() + d);
 
   const edit_ = mode === 'edit';
   return (
@@ -172,7 +214,7 @@ export default function Editor({ initial }) {
         </>}
       </div>
 
-      <div id="stage" ref={stage} onBlur={(e) => edit_ && e.target.isContentEditable && commit(e.target)}>
+      <div id="stage" ref={stage} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && ['b', 'i'].includes(e.key.toLowerCase())) { e.preventDefault(); toggleFmt(e.key.toLowerCase()); } }} onFocus={(e) => { const b = e.target?.dataset?.b; if (b !== undefined) setBi(+b); }} onBlur={(e) => edit_ && e.target.isContentEditable && commit(e.target)}>
         <Slide key={`${si}-${v}-${mode}`} s={s} i={si} n={m.slides.length} title={m.title} scale={scale} innerRef={node} editable={edit_} theme={m.theme || 'green'} />
       </div>
       <div id="strip">
@@ -187,24 +229,28 @@ export default function Editor({ initial }) {
           <button onClick={() => move(-1)}>Geser ◂</button><button onClick={() => move(1)}>▸ Geser</button>
           {s.type === 'image' && <button onClick={() => upd((sl) => { sl.full = !sl.full; })}>{s.full ? 'Gambar: penuh' : 'Gambar: dalam template'} ⇄</button>}
           <label className="btn">＋ Gambar<input type="file" accept="image/*" hidden onChange={addImage} /></label>
+          {isBlk(s) && <button onClick={dupBlock}>⧉ Duplikat teks</button>}
+          {isBlk(s) && s.blocks?.length > 1 && <button onClick={delBlock}>Hapus blok teks</button>}
           <button onClick={del}>Hapus</button>
         </>}
       </div>
       {edit_ && (
         <div className="row">
-          <label>Ukuran slide:&nbsp;
-            <input key={`z${si}-${v}`} type="number" min="1" max="500" defaultValue={s.fs || baseSize(s)} onBlur={(e) => setSize(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && e.target.blur()} style={{ width: 80, flex: 'none' }} />
+          <label>Ukuran teks:&nbsp;
+            <input key={`z${si}-${v}-${bi}`} type="number" min="1" max="500" defaultValue={curSize()} onBlur={(e) => setSize(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && e.target.blur()} style={{ width: 80, flex: 'none' }} />
           </label>
           {s.type === 'table' && (
             <label>Ukuran tabel:&nbsp;
               <input key={`t${si}-${v}`} type="number" min="1" max="500" defaultValue={s.tfs || (s.rows[0]?.length >= 5 ? 32 : 40)} onBlur={(e) => setSize(e.target.value, 'tfs')} onKeyDown={(e) => e.key === 'Enter' && e.target.blur()} style={{ width: 80, flex: 'none' }} />
             </label>
           )}
-          <button onClick={() => upd((sl) => { delete sl.fs; delete sl.tfs; })}>Reset ukuran</button>
+          <button onClick={() => upd((sl) => { delete sl.fs; delete sl.tfs; sl.blocks?.forEach((b) => { delete b.fs; }); })}>Reset ukuran</button>
           <label>Ukuran blok:&nbsp;
             <input type="number" min="1" max="500" value={selSize} onChange={(e) => setSelSize(e.target.value)} style={{ width: 80, flex: 'none' }} />
           </label>
           <button className="pri" onPointerDown={(e) => e.preventDefault()} onClick={applySize}>Terapkan ke blok</button>
+          <button onPointerDown={(e) => e.preventDefault()} onClick={() => toggleFmt('b')} style={{ fontWeight: 700 }}>B</button>
+          <button onPointerDown={(e) => e.preventDefault()} onClick={() => toggleFmt('i')} style={{ fontStyle: 'italic' }}>I</button>
           <button onPointerDown={(e) => e.preventDefault()} onClick={clearSel}>Normal</button>
         </div>
       )}
